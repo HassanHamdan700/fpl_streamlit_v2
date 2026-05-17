@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+import pickle
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import LabelEncoder
 import streamlit as st
@@ -14,6 +15,24 @@ class MatchPredictor:
         self.team_encoder = LabelEncoder()
         self.is_trained = False
         self.team_stats = {}
+        self.model_path = "models/match_result_model.pkl"
+        self.stats_path = "models/team_stats.pkl"
+        
+        # Mapping FPL API names to CSV names
+        self.name_map = {
+            "Man Utd": "Man United",
+            "Man City": "Man City",
+            "Nott'm Forest": "Nott'm Forest",
+            "Sheffield Utd": "Sheffield United",
+            "Spurs": "Tottenham",
+            "Newcastle Utd": "Newcastle",
+            "Wolverhampton Wanderers": "Wolves",
+            "Wolves": "Wolves",
+            "West Ham United": "West Ham",
+            "Brighton & Hove Albion": "Brighton",
+            "Leicester City": "Leicester",
+            "Newcastle United": "Newcastle"
+        }
 
     def load_data(self):
         """Loads all CSV files and handles encoding/formatting."""
@@ -114,15 +133,57 @@ class MatchPredictor:
         if not X.empty:
             self.model.fit(X, y)
             self.is_trained = True
+            self.save()
             return True
         return False
+
+    def save(self):
+        try:
+            with open(self.model_path, 'wb') as f:
+                pickle.dump(self.model, f)
+            with open(self.stats_path, 'wb') as f:
+                pickle.dump({
+                    'team_stats': self.team_stats,
+                    'team_encoder': self.team_encoder
+                }, f)
+        except Exception as e:
+            print(f"Error saving match model: {e}")
+
+    def load(self):
+        if os.path.exists(self.model_path) and os.path.exists(self.stats_path):
+            try:
+                with open(self.model_path, 'rb') as f:
+                    self.model = pickle.load(f)
+                with open(self.stats_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.team_stats = data['team_stats']
+                    self.team_encoder = data['team_encoder']
+                self.is_trained = True
+                return True
+            except Exception as e:
+                print(f"Error loading match model: {e}")
+        return False
+
+    def normalize_name(self, name):
+        """Standardizes team names between FPL API and historical CSVs."""
+        return self.name_map.get(name, name)
+
+    def get_team_stats(self, team_name):
+        """Public helper to get stats for a team with automatic name mapping."""
+        norm_name = self.normalize_name(team_name)
+        return self.team_stats.get(norm_name, {})
 
     def predict_match(self, home_team, away_team):
         """Infers results based on historical dominance and shot efficiency."""
         if not self.is_trained:
             self.train()
+            
+        home_team = self.normalize_name(home_team)
+        away_team = self.normalize_name(away_team)
                 
         if home_team not in self.team_encoder.classes_ or away_team not in self.team_encoder.classes_:
+            print(f"DEBUG: Missing teams in encoder classes. Home: {home_team}, Away: {away_team}")
+            print(f"DEBUG: Available classes: {self.team_encoder.classes_}")
             return None
             
         # For prediction, we use the average market probability of these teams' history
@@ -153,5 +214,6 @@ class MatchPredictor:
 @st.cache_resource
 def get_match_predictor():
     predictor = MatchPredictor(data_dir="data")
-    predictor.train()
+    if not predictor.load():
+        predictor.train()
     return predictor

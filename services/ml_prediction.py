@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import streamlit as st
+import os
+import pickle
 from services.fpl_api import get_bootstrap_static, get_fixtures
 
 class FPLPredictor:
@@ -14,6 +16,7 @@ class FPLPredictor:
         )
         self.is_trained = False
         self.feature_cols = ['form', 'selected_by_percent', 'now_cost', 'minutes_played_best', 'fdr_upcoming']
+        self.model_path = "models/fpl_points_model.pkl"
         
     def _prepare_training_data(self):
         bootstrap = get_bootstrap_static()
@@ -45,6 +48,25 @@ class FPLPredictor:
         X, y = self._prepare_training_data()
         self.xgb_model.fit(X, y)
         self.is_trained = True
+        self.save()
+
+    def save(self):
+        try:
+            with open(self.model_path, 'wb') as f:
+                pickle.dump(self.xgb_model, f)
+        except Exception as e:
+            print(f"Error saving model: {e}")
+
+    def load(self):
+        if os.path.exists(self.model_path):
+            try:
+                with open(self.model_path, 'rb') as f:
+                    self.xgb_model = pickle.load(f)
+                self.is_trained = True
+                return True
+            except Exception as e:
+                print(f"Error loading model: {e}")
+        return False
 
     def predict_points(self, players_df: pd.DataFrame):
         """
@@ -72,5 +94,6 @@ class FPLPredictor:
 @st.cache_resource
 def get_predictor():
     predictor = FPLPredictor()
-    predictor.train()
+    if not predictor.load():
+        predictor.train()
     return predictor

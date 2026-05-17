@@ -48,6 +48,16 @@ def get_fixtures():
     except requests.RequestException as e:
         st.error(f"Error fetching fixtures: {e}")
         return None
+
+@st.cache_data(ttl=60)
+def get_live_fixtures():
+    """Fetches all fixtures with a short cache for live updates."""
+    try:
+        response = requests.get(f"{BASE_URL}/fixtures/?utm_source=chatgpt.com", timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        return None
 @st.cache_data(ttl=60)
 def get_live_gameweek_data(gameweek: int):
     """Fetches live points for all players for a specific gameweek."""

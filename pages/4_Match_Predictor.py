@@ -105,8 +105,8 @@ if st.button("RUN AI SIMULATION", type="primary", use_container_width=True):
             # Additional Stats (Mocked or Basic)
             st.subheader("📋 Relative Performance (Season Averages)")
             s1, s2, s3 = st.columns(3)
-            h_stats = predictor.team_stats.get(home_team, {})
-            a_stats = predictor.team_stats.get(away_team, {})
+            h_stats = predictor.get_team_stats(home_team)
+            a_stats = predictor.get_team_stats(away_team)
             
             with s1:
                 st.write(f"**xG Generation (Att)**")

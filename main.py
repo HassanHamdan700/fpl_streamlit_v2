@@ -9,6 +9,7 @@ from services.fpl_api import (
     get_fixtures,
     get_gameweek_info
 )
+from concurrent.futures import ThreadPoolExecutor
 
 from services.ml_prediction import get_predictor
 from services.match_prediction import get_match_predictor
@@ -134,12 +135,19 @@ html, body, [class*="css"] {
 
 with st.spinner("Loading FPL AI Engine..."):
 
-    bootstrap = get_bootstrap_static()
-    fixtures = get_fixtures()
-    gw_info = get_gameweek_info()
-
-    predictor = get_predictor()
-    match_predictor = get_match_predictor()
+    # Parallelize data fetching to speed up initial load
+    with ThreadPoolExecutor() as executor:
+        f_boot = executor.submit(get_bootstrap_static)
+        f_fix = executor.submit(get_fixtures)
+        f_gw = executor.submit(get_gameweek_info)
+        f_pred = executor.submit(get_predictor)
+        f_match = executor.submit(get_match_predictor)
+        
+        bootstrap = f_boot.result()
+        fixtures = f_fix.result()
+        gw_info = f_gw.result()
+        predictor = f_pred.result()
+        match_predictor = f_match.result()
 
 # =========================================================
 # VALIDATION
@@ -150,104 +158,80 @@ if not bootstrap or not fixtures:
     st.stop()
 
 # =========================================================
-# DATA PREP
+# DATA PREP (CACHED)
 # =========================================================
 
-elements_df = pd.DataFrame(bootstrap["elements"])
-teams_df = pd.DataFrame(bootstrap["teams"])
-
-next_gw = gw_info["next"]
-
-# Team maps
-team_map = dict(zip(teams_df["id"], teams_df["name"]))
-
-position_map = {
-    1: "GK",
-    2: "DEF",
-    3: "MID",
-    4: "FWD"
-}
-
-# Fixture difficulty
-team_gw_fdr = {}
-
-for t in bootstrap["teams"]:
-
-    match = next(
-        (
-            f for f in fixtures
-            if f["event"] == next_gw and (
-                f["team_h"] == t["id"] or
-                f["team_a"] == t["id"]
-            )
-        ),
-        None
-    )
-
-    if match:
-        is_home = match["team_h"] == t["id"]
-
-        team_gw_fdr[t["id"]] = (
-            match["team_h_difficulty"]
-            if is_home
-            else match["team_a_difficulty"]
+@st.cache_data(ttl=600)
+def get_prepared_data(_bootstrap, _fixtures, _gw_info, _predictor):
+    elements_df = pd.DataFrame(_bootstrap["elements"])
+    teams_df = pd.DataFrame(_bootstrap["teams"])
+    next_gw = _gw_info["next"]
+    
+    # Team maps
+    team_map = dict(zip(teams_df["id"], teams_df["name"]))
+    position_map = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+    
+    # Fixture difficulty
+    team_gw_fdr = {}
+    for t in _bootstrap["teams"]:
+        match = next(
+            (f for f in _fixtures if f["event"] == next_gw and (f["team_h"] == t["id"] or f["team_a"] == t["id"])),
+            None
         )
+        if match:
+            is_home = match["team_h"] == t["id"]
+            team_gw_fdr[t["id"]] = match["team_h_difficulty"] if is_home else match["team_a_difficulty"]
+        else:
+            team_gw_fdr[t["id"]] = 3
 
-    else:
-        team_gw_fdr[t["id"]] = 3
+    # Numeric cleanup
+    elements_df["form"] = pd.to_numeric(elements_df["form"], errors="coerce").fillna(0)
+    elements_df["selected_by_percent"] = pd.to_numeric(elements_df["selected_by_percent"], errors="coerce").fillna(0)
+    elements_df["cost"] = elements_df["now_cost"] / 10
 
-# Numeric cleanup
-elements_df["form"] = pd.to_numeric(
-    elements_df["form"],
-    errors="coerce"
-).fillna(0)
+    # ML Inference
+    inf_df = pd.DataFrame({
+        "form": elements_df["form"],
+        "selected_by_percent": elements_df["selected_by_percent"],
+        "now_cost": elements_df["cost"],
+        "minutes_played_best": elements_df["minutes"] / 90,
+        "fdr_upcoming": elements_df["team"].map(team_gw_fdr).fillna(3)
+    })
+    elements_df["xPts"] = _predictor.predict_points(inf_df)
+    elements_df["team_name"] = elements_df["team"].map(team_map)
+    elements_df["position"] = elements_df["element_type"].map(position_map)
+    elements_df["efficiency"] = (elements_df["xPts"] / elements_df["cost"])
+    
+    # Static Picks
+    top_xpts = elements_df.nlargest(1, "xPts").iloc[0]
+    captain_pick = elements_df[elements_df["cost"] >= 9].nlargest(1, "xPts").iloc[0]
+    differential = elements_df[elements_df["selected_by_percent"] < 10].nlargest(1, "xPts").iloc[0]
+    best_fixture_team_id = min(team_gw_fdr, key=team_gw_fdr.get)
+    best_fixture_team = team_map[best_fixture_team_id]
+    
+    return {
+        "elements_df": elements_df,
+        "team_gw_fdr": team_gw_fdr,
+        "team_map": team_map,
+        "top_xpts": top_xpts,
+        "captain_pick": captain_pick,
+        "differential": differential,
+        "best_fixture_team": best_fixture_team,
+        "next_gw": next_gw
+    }
 
-elements_df["selected_by_percent"] = pd.to_numeric(
-    elements_df["selected_by_percent"],
-    errors="coerce"
-).fillna(0)
+# Run preparation
+ready_data = get_prepared_data(bootstrap, fixtures, gw_info, predictor)
 
-elements_df["cost"] = elements_df["now_cost"] / 10
-
-# =========================================================
-# ML FEATURES
-# =========================================================
-
-inf_df = pd.DataFrame({
-    "form": elements_df["form"],
-    "selected_by_percent": elements_df["selected_by_percent"],
-    "now_cost": elements_df["cost"],
-    "minutes_played_best": elements_df["minutes"] / 90,
-    "fdr_upcoming": elements_df["team"].map(team_gw_fdr).fillna(3)
-})
-
-elements_df["xPts"] = predictor.predict_points(inf_df)
-
-elements_df["team_name"] = elements_df["team"].map(team_map)
-
-elements_df["position"] = elements_df["element_type"].map(position_map)
-
-elements_df["efficiency"] = (
-    elements_df["xPts"] / elements_df["cost"]
-)
-
-# =========================================================
-# TOP PICKS
-# =========================================================
-
-top_xpts = elements_df.nlargest(1, "xPts").iloc[0]
-
-captain_pick = elements_df[
-    elements_df["cost"] >= 9
-].nlargest(1, "xPts").iloc[0]
-
-differential = elements_df[
-    elements_df["selected_by_percent"] < 10
-].nlargest(1, "xPts").iloc[0]
-
-best_fixture_team_id = min(team_gw_fdr, key=team_gw_fdr.get)
-
-best_fixture_team = team_map[best_fixture_team_id]
+# Extract variables
+elements_df = ready_data["elements_df"]
+team_gw_fdr = ready_data["team_gw_fdr"]
+team_map = ready_data["team_map"]
+top_xpts = ready_data["top_xpts"]
+captain_pick = ready_data["captain_pick"]
+differential = ready_data["differential"]
+best_fixture_team = ready_data["best_fixture_team"]
+next_gw = ready_data["next_gw"]
 
 # =========================================================
 # TOP BAR
