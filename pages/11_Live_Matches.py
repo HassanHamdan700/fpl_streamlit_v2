@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
-
 from services.fpl_api import (
     get_bootstrap_static,
     get_live_fixtures,
@@ -9,199 +8,195 @@ from services.fpl_api import (
 )
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Live Matches", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Live Match Center", page_icon="⚽", layout="wide")
 
+# =========================
+# PREMIUM LIVE MATCH CSS
+# =========================
 st.markdown("""
 <style>
-.metric-card {
-    background: #161b22;
-    padding: 1.5rem;
-    border-radius: 18px;
-    border: 1px solid rgba(255,255,255,0.06);
-    transition: 0.2s ease-in-out;
-    margin-bottom: 0.5rem;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
-}
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;800&display=swap');
+    * { font-family: 'Outfit', sans-serif !important; }
 
-.metric-card:hover {
-    border: 1px solid #00ff87;
-    transform: translateY(-2px);
-    box-shadow: 0 12px 40px rgba(0, 255, 135, 0.15);
-}
+    .match-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 30px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 15px 45px rgba(0, 0, 0, 0.4);
+    }
+    
+    .status-badge {
+        font-weight: 800;
+        font-size: 0.65rem;
+        padding: 5px 15px;
+        border-radius: 100px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 1.5rem;
+        display: inline-block;
+    }
+    
+    .scoreboard-grid {
+        display: grid;
+        grid-template-columns: 1fr 140px 1fr;
+        align-items: center;
+        text-align: center;
+        gap: 15px;
+    }
+    
+    .team-badge-img {
+        width: 60px;
+        height: 60px;
+        object-fit: contain;
+        display: block;
+        margin: 0 auto 10px auto;
+    }
+    
+    .team-name-pro {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .score-container {
+        background: #000;
+        padding: 0.5rem;
+        border-radius: 14px;
+        font-size: 3rem;
+        font-weight: 800;
+        color: #00ff87;
+        border: 1px solid rgba(0, 255, 135, 0.2);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .stat-pill-pro {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        color: #e2e8f0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 3px;
+    }
+    
+    .stat-section-title {
+        color: #9ca3af;
+        font-size: 0.6rem;
+        font-weight: 900;
+        margin-top: 12px;
+        margin-bottom: 4px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
 
-.team-name {
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: white;
-    font-family: 'Outfit', sans-serif !important;
-}
-
-.score {
-    font-size: 3rem;
-    font-weight: 800;
-    color: #00ff87;
-    padding: 0 1.5rem;
-}
-
-.match-status {
-    font-size: 1rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    margin-bottom: 1rem;
-    text-align: center;
-    letter-spacing: 0.05em;
-}
-
-.stat-item {
-    font-size: 1rem;
-    margin-bottom: 0.5rem;
-    color: #e2e8f0;
-}
-.stat-item-label {
-    color: #9ca3af;
-    font-weight: bold;
-    margin-right: 5px;
-    text-transform: uppercase;
-    font-size: 0.85rem;
-}
+    .live-indicator {
+        width: 6px;
+        height: 6px;
+        background: #ff185e;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        animation: pulse-red 1.5s infinite;
+    }
+    
+    @keyframes pulse-red {
+        0% { opacity: 1; }
+        50% { opacity: 0.4; }
+        100% { opacity: 1; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Live Matches Dashboard")
-st.markdown("<p style='color:#9ca3af; margin-top:-1rem; font-size: 1.2rem;'>Real-time Match Center: Time, Goals, Assists, and Bonus Points</p>", unsafe_allow_html=True)
+st.title("⚽ Live Match Center")
 
-with st.spinner("Fetching Live Match Data..."):
-    with ThreadPoolExecutor() as executor:
+with st.spinner("Updating Feed..."):
+    with ThreadPoolExecutor(max_workers=3) as executor:
         f_boot = executor.submit(get_bootstrap_static)
         f_fix = executor.submit(get_live_fixtures)
         f_gw = executor.submit(get_gameweek_info)
-        
-        bootstrap = f_boot.result()
-        fixtures = f_fix.result()
-        gw_info = f_gw.result()
+        boot, fixtures, gw_info = f_boot.result(), f_fix.result(), f_gw.result()
 
-if not bootstrap or not fixtures or not gw_info:
-    st.error("Failed to load FPL data. Please try again.")
+if not all([boot, fixtures, gw_info]):
+    st.error("Live feed offline.")
     st.stop()
 
-# Helper mappings
-teams_map = {t['id']: t for t in bootstrap['teams']}
-players_map = {p['id']: p for p in bootstrap['elements']}
-
+players_map = {p['id']: p for p in boot['elements']}
+teams_map = {t['id']: {'name': t['name'], 'code': t['code']} for t in boot['teams']}
 current_gw = gw_info.get("current", 1)
+available_gws = sorted(list(set([f['event'] for f in fixtures if f['event']])))
+selected_gw = st.sidebar.selectbox("Select Gameweek", available_gws, index=available_gws.index(current_gw) if current_gw in available_gws else 0)
 
-# Sidebar for GW Selection
-st.sidebar.markdown("### ⚙️ View Options")
-available_gws = sorted(list(set([f.get("event") for f in fixtures if f.get("event")])))
-if not available_gws:
-    st.info("No fixtures available.")
-    st.stop()
-selected_gw = st.sidebar.selectbox("Gameweek", available_gws, index=available_gws.index(current_gw) if current_gw in available_gws else 0)
+gw_fixtures = sorted([f for f in fixtures if f.get('event') == selected_gw], key=lambda x: (not x.get('started'), x.get('kickoff_time') or ""))
 
-gw_fixtures = [f for f in fixtures if f.get('event') == selected_gw]
-
-if not gw_fixtures:
-    st.info(f"No fixtures found for Gameweek {selected_gw}.")
-    st.stop()
-
-# Sort fixtures: live/started first
-gw_fixtures = sorted(gw_fixtures, key=lambda x: (not x.get('started'), x.get('kickoff_time') or ""))
-
-for fixture in gw_fixtures:
-    team_h = teams_map.get(fixture['team_h'], {})
-    team_a = teams_map.get(fixture['team_a'], {})
-    team_h_name = team_h.get('name', 'Home')
-    team_a_name = team_a.get('name', 'Away')
+for fix in gw_fixtures:
+    started, finished = fix.get('started'), fix.get('finished_provisional') or fix.get('finished')
     
-    score_h = fixture.get('team_h_score')
-    score_a = fixture.get('team_a_score')
-    
-    started = fixture.get('started')
-    finished = fixture.get('finished_provisional') or fixture.get('finished')
-    minutes = fixture.get('minutes', 0)
-    
+    st_style = "background:rgba(2, 239, 255, 0.1); color:#02efff; border:1px solid rgba(2, 239, 255, 0.2);"
+    st_text = "Upcoming"
     if finished:
-        match_status = "Full Time"
-        status_color = "#ff185e"
+        st_style = "background:rgba(255, 24, 94, 0.1); color:#ff185e; border:1px solid rgba(255, 24, 94, 0.2);"
+        st_text = "Full Time"
     elif started:
-        match_status = f"{minutes}' LIVE"
-        status_color = "#00ff87"
-    else:
-        ko_time_str = fixture.get('kickoff_time')
-        if ko_time_str:
-            try:
-                ko_time = datetime.strptime(ko_time_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                match_status = ko_time.strftime("%A, %H:%M UTC")
-            except:
-                match_status = "Upcoming"
-        else:
-            match_status = "TBC"
-        status_color = "#02efff"
+        st_style = "background:rgba(0, 255, 135, 0.1); color:#00ff87; border:1px solid rgba(0, 255, 135, 0.2);"
+        st_text = f"<span class='live-indicator'></span> {fix.get('minutes', 0)}' LIVE"
 
-    score_display_h = score_h if score_h is not None else ""
-    score_display_a = score_a if score_a is not None else ""
-    score_divider = "-" if started else "vs"
+    t_h, t_a = teams_map.get(fix['team_h']), teams_map.get(fix['team_a'])
+    badge_h = f"https://resources.premierleague.com/premierleague/badges/t{t_h['code']}.png"
+    badge_a = f"https://resources.premierleague.com/premierleague/badges/t{t_a['code']}.png"
+    sc_h, sc_a = fix.get('team_h_score', ''), fix.get('team_a_score', '')
+    div = "-" if started else "vs"
 
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="match-status" style="color: {status_color};">{match_status}</div>
-        <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 0.5rem;">
-            <div class="team-name" style="flex: 1; text-align: right;">{team_h_name}</div>
-            <div class="score">{score_display_h} <span style="color: #4b5563; font-size: 2rem;">{score_divider}</span> {score_display_a}</div>
-            <div class="team-name" style="flex: 1; text-align: left;">{team_a_name}</div>
+    # BUILD CARD
+    card_html = f"""
+    <div class="match-card">
+        <center><div class="status-badge" style="{st_style}">{st_text}</div></center>
+        <div class="scoreboard-grid">
+            <div class="team-side">
+                <img src="{badge_h}" class="team-badge-img">
+                <div class="team-name-pro">{t_h['name']}</div>
+            </div>
+            <div class="score-container">
+                <span>{sc_h}</span>
+                <span style="font-size: 1.2rem; color: #4b5563;">{div}</span>
+                <span>{sc_a}</span>
+            </div>
+            <div class="team-side">
+                <img src="{badge_a}" class="team-badge-img">
+                <div class="team-name-pro">{t_a['name']}</div>
+            </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if started:
-        stats = fixture.get('stats', [])
-        
-        def render_stat(stat_id):
-            stat_obj = next((s for s in stats if s['identifier'] == stat_id), None)
-            if not stat_obj: return None, None
-            
-            h_data = stat_obj.get('h', [])
-            a_data = stat_obj.get('a', [])
-            
-            def get_text(items):
-                lines = []
-                for item in items:
-                    p = players_map.get(item['element'], {}).get('web_name', 'Unknown')
-                    val = item['value']
-                    lines.append(f"{p} ({val})")
-                return ", ".join(lines)
-                
-            return get_text(h_data), get_text(a_data)
+    """
 
-        g_h, g_a = render_stat('goals_scored')
-        a_h, a_a = render_stat('assists')
-        b_h, b_a = render_stat('bonus')
-        bps_h, bps_a = render_stat('bps')
-        
-        # Only render if there's data
-        has_data = any([g_h, g_a, a_h, a_a, b_h, b_a, bps_h, bps_a])
-        if has_data:
-            with st.container():
-                c1, c2 = st.columns(2)
-                
-                with c1:
-                    # Home Stats
-                    html = ""
-                    if g_h: html += f"<div class='stat-item'><span class='stat-item-label'>⚽ Goals:</span> {g_h}</div>"
-                    if a_h: html += f"<div class='stat-item'><span class='stat-item-label'>🤝 Assists:</span> {a_h}</div>"
-                    if b_h: html += f"<div class='stat-item'><span class='stat-item-label'>⭐ Bonus:</span> {b_h}</div>"
-                    if bps_h: html += f"<div class='stat-item'><span class='stat-item-label'>📊 BPS:</span> {bps_h}</div>"
-                    if html: st.markdown(f"<div style='background: rgba(255,255,255,0.02); padding: 1rem; border-radius: 0 0 12px 12px; border: 1px solid rgba(255,255,255,0.05); border-top: none; margin-bottom: 2rem;'>{html}</div>", unsafe_allow_html=True)
-                
-                with c2:
-                    # Away Stats
-                    html = ""
-                    if g_a: html += f"<div class='stat-item'><span class='stat-item-label'>⚽ Goals:</span> {g_a}</div>"
-                    if a_a: html += f"<div class='stat-item'><span class='stat-item-label'>🤝 Assists:</span> {a_a}</div>"
-                    if b_a: html += f"<div class='stat-item'><span class='stat-item-label'>⭐ Bonus:</span> {b_a}</div>"
-                    if bps_a: html += f"<div class='stat-item'><span class='stat-item-label'>📊 BPS:</span> {bps_a}</div>"
-                    if html: st.markdown(f"<div style='background: rgba(255,255,255,0.02); padding: 1rem; border-radius: 0 0 12px 12px; border: 1px solid rgba(255,255,255,0.05); border-top: none; margin-bottom: 2rem;'>{html}</div>", unsafe_allow_html=True)
-        else:
-             st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
-    else:
-        st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
+    if started:
+        fx_stats = fix.get('stats', [])
+        card_html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 1.5rem;">'
+        for side in ['h', 'a']:
+            side_html = '<div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 12px; height: 100%;">'
+            for skey in ['goals_scored', 'assists', 'bonus']:
+                sobj = next((s for s in fx_stats if s['identifier'] == skey), None)
+                if sobj and sobj.get(side):
+                    side_html += f'<div class="stat-section-title">{skey.replace("_"," ")}</div>'
+                    side_html += '<div style="display: flex; flex-wrap: wrap;">'
+                    icon = "⚽" if skey == 'goals_scored' else ("🤝" if skey == 'assists' else "⭐")
+                    for itm in sobj.get(side):
+                        pname = players_map.get(itm['element'], {}).get('web_name', 'Unknown')
+                        side_html += f'<div class="stat-pill-pro">{icon} <b>{pname}</b> {itm["value"]}</div>'
+                    side_html += '</div>'
+            side_html += '</div>'
+            card_html += side_html
+        card_html += '</div>'
+
+    card_html += "</div>"
+    st.markdown(card_html, unsafe_allow_html=True)
